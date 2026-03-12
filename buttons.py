@@ -44,18 +44,19 @@ class BeginButton(Button):
     """
     BEGIN button: toggles between IDLE and MEASURING states.
 
-    Single press: toggle measurement on/off
+    One physical press = one toggle.
     """
 
     def __init__(self, pin=17, name="BEGIN_BUTTON"):
         super().__init__(pin, name, pull_up=True)
-        self.last_press_time = 0
+        self.last_press_time = 0.0
         self.debounce_time = 0.3
         self._armed = True
 
     def check_press(self):
         pressed = self.is_pressed()
 
+        # Re-arm only after button release
         if not pressed:
             self._armed = True
             return False
@@ -74,9 +75,9 @@ class BeginButton(Button):
 
 class PowerButton(Button):
     """
-    POWER button: stops measurement and shuts down when held for >2 seconds.
+    POWER button: stops measurement when held for >2 seconds.
 
-    Hold for >2 seconds: stop measurement and shut down
+    One hold = one shutdown callback.
     """
 
     def __init__(self, pin=27, name="POWER_BUTTON"):
@@ -84,6 +85,7 @@ class PowerButton(Button):
         self.hold_threshold = 2.0
         self.press_start_time = None
         self.shutdown_callback = None
+        self._triggered = False
 
     def set_shutdown_callback(self, callback):
         self.shutdown_callback = callback
@@ -92,14 +94,15 @@ class PowerButton(Button):
         if self.is_pressed():
             if self.press_start_time is None:
                 self.press_start_time = time.time()
+                self._triggered = False
                 print(f"[{self.name}] Pressed (hold for {self.hold_threshold}s to shutdown)")
 
             hold_time = time.time() - self.press_start_time
-            if hold_time > self.hold_threshold:
+            if hold_time > self.hold_threshold and not self._triggered:
+                self._triggered = True
                 print(f"[{self.name}] Held for {round(hold_time, 2)}s - Stopping measurement...")
                 if self.shutdown_callback:
                     self.shutdown_callback()
-                self.press_start_time = None
                 return True
         else:
             if self.press_start_time is not None:
@@ -107,5 +110,6 @@ class PowerButton(Button):
                 if hold_time <= self.hold_threshold:
                     print(f"[{self.name}] Released after {round(hold_time, 2)}s (not long enough)")
                 self.press_start_time = None
+                self._triggered = False
 
         return False

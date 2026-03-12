@@ -71,7 +71,10 @@ class MeasurementSystem:
             dead_time_s=ACCELEROMETER_DEAD_TIME_S,
         )
         print()
+
+        # Do not queue transient events unless we are in measuring mode
         self.accelerometer.set_measurement_enabled(False)
+
         self.hall_sensor = None
         if HALL_ENABLED:
             print("Initializing Hall sensor...")
@@ -99,6 +102,7 @@ class MeasurementSystem:
             blink_interval=MEASURING_LED_BLINK_INTERVAL,
         )
         self.idle_led.turn_on()
+
         self.usb_copy_led = CopyLED(
             pin=USB_COPY_LED_PIN,
             blink_interval=USB_COPY_LED_BLINK_INTERVAL,
@@ -132,6 +136,7 @@ class MeasurementSystem:
             print(f"[CSV] Failed to append reading: {e}")
 
     def on_begin_button_pressed(self):
+        """Toggle measurement on/off with the BEGIN button."""
         self.state_machine.toggle_measurement()
 
         if self.state_machine.is_measuring():
@@ -139,8 +144,10 @@ class MeasurementSystem:
             self.accelerometer.clear_events()
             self.accelerometer.set_measurement_enabled(True)
             self._initialize_csv_file()
+
             if self.hall_sensor:
                 self.hall_sensor.reset_count()
+
             self.idle_led.turn_off()
         else:
             self.accelerometer.set_measurement_enabled(False)
@@ -148,6 +155,7 @@ class MeasurementSystem:
             self.idle_led.turn_on()
 
     def on_shutdown(self):
+        """Stop measurement and save data."""
         self.accelerometer.set_measurement_enabled(False)
 
         if self.state_machine.is_measuring():
@@ -160,6 +168,7 @@ class MeasurementSystem:
         print("\n[POWER] Measurement stopped. Returned to IDLE.")
 
     def read_vibration(self):
+        """Drain queued transient events and store them as readings."""
         try:
             events = self.accelerometer.drain_events()
             for event in events:
@@ -194,11 +203,13 @@ class MeasurementSystem:
                     parts = line.split()
                     if len(parts) < 3:
                         continue
+
                     device, mount_point, fstype = parts[0], parts[1], parts[2]
                     if self._is_removable_mount(device, fstype, mount_point):
                         mounts.add(mount_point)
         except Exception as e:
             print(f"[USB] Failed to scan mounts: {e}")
+
         return sorted(mounts)
 
     def _build_usb_csv_path(self, mount_path):
@@ -298,13 +309,15 @@ class MeasurementSystem:
     def cleanup(self):
         """Clean up GPIO and other resources."""
         print("Cleaning up...")
+
         if self.hall_sensor:
             self.hall_sensor.cleanup()
+
         if self.accelerometer:
             self.accelerometer.cleanup()
+
         try:
             import RPi.GPIO as GPIO
-
             GPIO.cleanup()
             print("GPIO cleanup complete.")
         except Exception:

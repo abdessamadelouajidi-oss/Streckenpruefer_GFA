@@ -17,7 +17,7 @@ class Sensor(ABC):
 
 
 class Accelerometer(Sensor):
-    """Interrupt-driven MMA8452Q transient detector matching transient_detection.py behavior."""
+    """Interrupt-driven MMA8452Q transient detector."""
 
     # Registers
     STATUS = 0x00
@@ -50,8 +50,8 @@ class Accelerometer(Sensor):
     INT_EN_TRANS = 1 << 5
     INT_CFG_TRANS = 1 << 5
 
-    # NOTE: ELE exists, but we intentionally do NOT use it here
-    # to match transient_detection.py behavior.
+    # Match the working transient_detection.py behavior:
+    # do NOT use ELE here
     TRANSIENT_ELE = 1 << 4
     TRANSIENT_ZTEFE = 1 << 3
     TRANSIENT_YTEFE = 1 << 2
@@ -105,7 +105,13 @@ class Accelerometer(Sensor):
         self._events = deque()
         self._last_event_time = 0.0
         self._last_xyz = {"x": 0.0, "y": 0.0, "z": 0.0}
+
+        # Control flag: measurement is OFF until main enables it
         self.measurement_enabled = False
+
+        # Track whether GPIO edge detection is currently armed
+        self._interrupt_armed = False
+
         self._load_gpio()
         self._initialize_i2c()
 
@@ -123,21 +129,31 @@ class Accelerometer(Sensor):
             self.i2c = SMBus(self.bus_number)
             self._detect_device_address()
             self._configure_sensor()
-            self._setup_gpio_interrupt()
+            self._setup_gpio_pin_only()
 
             print(
                 "[ACCELEROMETER] Initialized on "
                 f"bus {self.bus_number}, address 0x{self.i2c_address:02X}, "
                 f"GPIO {self.interrupt_gpio}"
             )
+            print("[ACCELEROMETER] Interrupt starts DISARMED until measurement is enabled.")
         except Exception as e:
             print(f"[ACCELEROMETER] ERROR: Could not initialize - {type(e).__name__}: {e}")
             self.cleanup()
 
     def set_measurement_enabled(self, enabled: bool):
-        self.measurement_enabled = bool(enabled)
-        if not self.measurement_enabled:
+        """Enable or disable transient event collection."""
+        enabled = bool(enabled)
+        self.measurement_enabled = enabled
+
+        if enabled:
+            self._last_event_time = 0.0
+            self._arm_gpio_interrupt()
+            print("[ACCELEROMETER] Measurement ENABLED")
+        else:
+            self._disarm_gpio_interrupt()
             self.clear_events()
+            print("[ACCELEROMETER] Measurement DISABLED")
 
     def is_measurement_enabled(self):
         return self.measurement_enabled
@@ -308,8 +324,6 @@ class Accelerometer(Sensor):
         ctrl1_value = self._odr_to_ctrl_reg1_bits(self.odr_hz)
         self._write_register(self.CTRL_REG1, ctrl1_value)
 
-        # Match transient_detection.py exactly:
-        # non-latched transient mode, so DO NOT set ELE
         transient_cfg_value = (
             self.TRANSIENT_ZTEFE
             | self.TRANSIENT_YTEFE
@@ -343,7 +357,8 @@ class Accelerometer(Sensor):
         startup_src = self._read_register(self.TRANSIENT_SRC)
         print(f"[ACCELEROMETER] Startup TRANSIENT_SRC clear read = 0x{startup_src:02X}")
 
-    def _setup_gpio_interrupt(self):
+    def _setup_gpio_pin_only(self):
+        """Configure the GPIO pin, but do not arm interrupts yet."""
         if self.GPIO is None:
             return
 
@@ -360,15 +375,6 @@ class Accelerometer(Sensor):
         else:
             self.GPIO.setup(self.interrupt_gpio, self.GPIO.IN, pull_up_down=self.GPIO.PUD_DOWN)
 
-        # Match transient_detection.py exactly:
-        # use BOTH edges, filter by actual active level in callback
-        self.GPIO.add_event_detect(
-            self.interrupt_gpio,
-            self.GPIO.BOTH,
-            callback=self._gpio_callback,
-            bouncetime=1,
-        )
-
         print(
             f"[ACCELEROMETER] GPIO ready on BCM {self.interrupt_gpio} "
             f"({'INT1' if self.use_int1 else 'INT2'})"
@@ -378,10 +384,38 @@ class Accelerometer(Sensor):
             f"{'active low' if self.int_active_low else 'active high'}"
         )
 
+    def _arm_gpio_interrupt(self):
+        """Start listening to the interrupt pin."""
+        if self.GPIO is None or self._interrupt_armed:
+            return
+
+        self.GPIO.add_event_detect(
+            self.interrupt_gpio,
+            self.GPIO.BOTH,
+            callback=self._gpio_callback,
+            bouncetime=1,
+        )
+        self._interrupt_armed = True
+
+    def _disarm_gpio_interrupt(self):
+        """Stop listening to the interrupt pin."""
+        if self.GPIO is None or not self._interrupt_armed:
+            return
+
+        try:
+            self.GPIO.remove_event_detect(self.interrupt_gpio)
+        except Exception:
+            pass
+
+        self._interrupt_armed = False
+
     def _gpio_callback(self, channel):
         del channel
 
         if self.i2c is None or self.GPIO is None:
+            return
+
+        if not self.measurement_enabled:
             return
 
         try:
@@ -400,6 +434,9 @@ class Accelerometer(Sensor):
             print(f"[ACCELEROMETER] Error in GPIO callback: {e}")
 
     def _handle_transient_event(self):
+        if not self.measurement_enabled:
+            return
+
         now = time.monotonic()
         if (now - self._last_event_time) < self.dead_time_s:
             return
@@ -470,11 +507,9 @@ class Accelerometer(Sensor):
             self._events.clear()
 
     def cleanup(self):
+        self._disarm_gpio_interrupt()
+
         if self.GPIO is not None:
-            try:
-                self.GPIO.remove_event_detect(self.interrupt_gpio)
-            except Exception:
-                pass
             try:
                 self.GPIO.cleanup(self.interrupt_gpio)
             except Exception:
@@ -492,8 +527,8 @@ class HallSensor:
     """
     Threaded polling hall sensor.
     Counts ONLY ONE per interaction:
-    - counts on HIGH -> LOW
-    - then locks until signal returns to HIGH and stays stable
+      - counts on HIGH -> LOW
+      - then locks until signal returns to HIGH and stays stable
     """
 
     def __init__(
