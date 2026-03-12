@@ -18,7 +18,9 @@ class Sensor(ABC):
 class Accelerometer(Sensor):
     """Interrupt-driven MMA8452Q transient detector."""
 
+    # Registers
     WHO_AM_I = 0x0D
+    INT_SOURCE = 0x0C
     OUT_X_MSB = 0x01
     XYZ_DATA_CFG = 0x0E
     TRANSIENT_CFG = 0x1D
@@ -28,23 +30,34 @@ class Accelerometer(Sensor):
     CTRL_REG1 = 0x2A
     CTRL_REG4 = 0x2D
     CTRL_REG5 = 0x2E
-    INT_SOURCE = 0x0C
 
+    # Bit fields
     ACTIVE_BIT = 0x01
+
     INT_EN_TRANS = 1 << 5
     INT_CFG_TRANS = 1 << 5
+
     TRANSIENT_EA = 1 << 6
+    TRANSIENT_ELE = 1 << 4
     TRANSIENT_ZTEFE = 1 << 3
     TRANSIENT_YTEFE = 1 << 2
     TRANSIENT_XTEFE = 1 << 1
+    TRANSIENT_HPF_BYP = 1 << 0  # keep this 0 to USE HPF
+
+    ZTRANSE = 1 << 5
+    ZPOL = 1 << 4
+    YTRANSE = 1 << 3
+    YPOL = 1 << 2
+    XTRANSE = 1 << 1
+    XPOL = 1 << 0
 
     def __init__(
         self,
         i2c_address=0x1C,
         bus=1,
         auto_detect=True,
-        int1_gpio=26,
-        int2_gpio=19,
+        int1_gpio=26,      # BCM GPIO26 = physical pin 37
+        int2_gpio=19,      # BCM GPIO19 = physical pin 35
         use_int1=True,
         int_active_low=True,
         odr_hz=100,
@@ -81,7 +94,6 @@ class Accelerometer(Sensor):
     def _load_gpio(self):
         try:
             import RPi.GPIO as GPIO
-
             self.GPIO = GPIO
         except ImportError:
             print("[ACCELEROMETER] Warning: RPi.GPIO not available, interrupts disabled")
@@ -94,14 +106,14 @@ class Accelerometer(Sensor):
             self._detect_device_address()
             self._configure_sensor()
             self._setup_gpio_interrupt()
+
             print(
-                "[ACCELEROMETER] Initialized transient detection on bus "
-                f"{self.bus_number}, address 0x{self.i2c_address:02X}, "
+                "[ACCELEROMETER] Initialized transient detection on "
+                f"bus {self.bus_number}, address 0x{self.i2c_address:02X}, "
                 f"GPIO {self.interrupt_gpio}"
             )
         except Exception as e:
-            print(f"[ACCELEROMETER] Warning: Could not initialize - {e}")
-            print("[ACCELEROMETER] Using simulated mode")
+            print(f"[ACCELEROMETER] ERROR: Could not initialize - {type(e).__name__}: {e}")
             self.cleanup()
 
     def _detect_device_address(self):
@@ -150,12 +162,12 @@ class Accelerometer(Sensor):
             400: 0b001,
             200: 0b010,
             100: 0b011,
-            50: 0b100,
-            12: 0b101,
-            13: 0b101,
-            6: 0b110,
-            2: 0b111,
-            1: 0b111,
+            50:  0b100,
+            12:  0b101,
+            13:  0b101,
+            6:   0b110,
+            2:   0b111,
+            1:   0b111,
         }
         if odr_hz not in mapping:
             raise ValueError("Unsupported ODR_HZ")
@@ -197,28 +209,54 @@ class Accelerometer(Sensor):
     def _configure_sensor(self):
         who_am_i = self._read_register(self.WHO_AM_I)
         if who_am_i != 0x2A:
-            print("[ACCELEROMETER] Warning: WHO_AM_I is not 0x2A")
+            print(f"[ACCELEROMETER] Warning: WHO_AM_I is 0x{who_am_i:02X}, expected 0x2A")
 
         threshold_lsb = self._threshold_mps2_to_ths_lsb(self.threshold_mps2)
+        threshold_g = threshold_lsb * 0.063
+        threshold_mps2_actual = threshold_g * 9.80665
+
+        print("[ACCELEROMETER] Config:")
+        print(f"  Range            : +/-{self.full_scale_g} g")
+        print(f"  ODR              : {self.odr_hz} Hz")
+        print(f"  Threshold req    : {self.threshold_mps2:.2f} m/s^2")
+        print(f"  Threshold reg    : {threshold_lsb}")
+        print(f"  Threshold actual : {threshold_mps2_actual:.2f} m/s^2")
+        print(f"  Count            : {self.transient_count}")
+        print(f"  Route            : {'INT1' if self.use_int1 else 'INT2'}")
+        print(f"  GPIO             : {self.interrupt_gpio}")
 
         self._set_standby()
+
+        # Set measurement range
         self._write_register(
             self.XYZ_DATA_CFG,
             self._range_to_xyz_data_cfg(self.full_scale_g),
         )
 
+        # Set ODR, keep standby for now
         ctrl1_value = self._odr_to_ctrl_reg1_bits(self.odr_hz)
         self._write_register(self.CTRL_REG1, ctrl1_value)
+
+        # Enable transient on X/Y/Z, latch event, use HPF
         self._write_register(
             self.TRANSIENT_CFG,
-            self.TRANSIENT_ZTEFE | self.TRANSIENT_YTEFE | self.TRANSIENT_XTEFE,
+            self.TRANSIENT_ELE
+            | self.TRANSIENT_ZTEFE
+            | self.TRANSIENT_YTEFE
+            | self.TRANSIENT_XTEFE
         )
+
+        # DBCNTM=1 in bit 7, threshold in bits[6:0]
         self._write_register(self.TRANSIENT_THS, 0x80 | threshold_lsb)
+
+        # Number of consecutive samples above threshold
         self._write_register(self.TRANSIENT_COUNT_REG, self.transient_count)
 
+        # Enable transient interrupt
         ctrl4 = self._read_register(self.CTRL_REG4)
         self._write_register(self.CTRL_REG4, ctrl4 | self.INT_EN_TRANS)
 
+        # Route interrupt to INT1 or INT2
         ctrl5 = self._read_register(self.CTRL_REG5)
         if self.use_int1:
             ctrl5 |= self.INT_CFG_TRANS
@@ -229,7 +267,11 @@ class Accelerometer(Sensor):
         self._set_active()
         time.sleep(0.2)
 
-        self._read_register(self.INT_SOURCE)
+        # Clear stale startup flags
+        try:
+            self._read_register(self.INT_SOURCE)
+        except Exception:
+            pass
         startup_src = self._read_register(self.TRANSIENT_SRC)
         print(f"[ACCELEROMETER] Startup TRANSIENT_SRC clear read = 0x{startup_src:02X}")
 
@@ -240,11 +282,19 @@ class Accelerometer(Sensor):
         self.GPIO.setwarnings(False)
         self.GPIO.setmode(self.GPIO.BCM)
 
+        try:
+            self.GPIO.cleanup(self.interrupt_gpio)
+        except Exception:
+            pass
+
         pull = self.GPIO.PUD_UP if self.int_active_low else self.GPIO.PUD_DOWN
         self.GPIO.setup(self.interrupt_gpio, self.GPIO.IN, pull_up_down=pull)
+
+        edge = self.GPIO.FALLING if self.int_active_low else self.GPIO.RISING
+
         self.GPIO.add_event_detect(
             self.interrupt_gpio,
-            self.GPIO.BOTH,
+            edge,
             callback=self._gpio_callback,
             bouncetime=1,
         )
@@ -252,15 +302,10 @@ class Accelerometer(Sensor):
     def _gpio_callback(self, channel):
         del channel
 
-        if self.GPIO is None or self.i2c is None:
+        if self.i2c is None:
             return
 
         try:
-            level = self.GPIO.input(self.interrupt_gpio)
-            if self.int_active_low and level != 0:
-                return
-            if not self.int_active_low and level != 1:
-                return
             self._handle_transient_event()
         except Exception as e:
             print(f"[ACCELEROMETER] Error in GPIO callback: {e}")
@@ -294,19 +339,39 @@ class Accelerometer(Sensor):
             self._counts_to_mps2(z_counts),
         )
 
+    def _decode_src(self, src):
+        parts = []
+
+        if src & self.ZTRANSE:
+            parts.append(f"Z({'+' if src & self.ZPOL else '-'})")
+        if src & self.YTRANSE:
+            parts.append(f"Y({'+' if src & self.YPOL else '-'})")
+        if src & self.XTRANSE:
+            parts.append(f"X({'+' if src & self.XPOL else '-'})")
+
+        return ", ".join(parts) if parts else "none"
+
     def _handle_transient_event(self):
         now = time.monotonic()
         if (now - self._last_event_time) < self.dead_time_s:
             return
 
-        self._read_register(self.INT_SOURCE)
+        # Read interrupt source first, then transient source
+        try:
+            self._read_register(self.INT_SOURCE)
+        except Exception:
+            pass
+
         src = self._read_register(self.TRANSIENT_SRC)
         if not (src & self.TRANSIENT_EA):
             return
 
         x_value, y_value, z_value = self._read_xyz_mps2()
+
         reading = {
             "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "src": f"0x{src:02X}",
+            "axes": self._decode_src(src),
             "x": round(x_value, 2),
             "y": round(y_value, 2),
             "z": round(z_value, 2),
@@ -314,12 +379,18 @@ class Accelerometer(Sensor):
 
         with self._events_lock:
             self._events.append(reading)
+
         self._last_xyz = {
             "x": reading["x"],
             "y": reading["y"],
             "z": reading["z"],
         }
         self._last_event_time = now
+
+        print(
+            f"[ACCELEROMETER] TRANSIENT {reading['src']} ({reading['axes']}) "
+            f"x={reading['x']:+.2f} y={reading['y']:+.2f} z={reading['z']:+.2f}"
+        )
 
     def read(self):
         if self.i2c is None:
@@ -400,6 +471,7 @@ class HallSensor:
             self.GPIO = GPIO
             GPIO.setwarnings(False)
             GPIO.setmode(GPIO.BCM)
+
             try:
                 GPIO.cleanup(self.pin)
             except Exception:
@@ -462,6 +534,7 @@ class HallSensor:
 
         if self.GPIO is None:
             return
+
         try:
             self.GPIO.cleanup(self.pin)
         except Exception:
