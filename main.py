@@ -71,7 +71,7 @@ class MeasurementSystem:
             dead_time_s=ACCELEROMETER_DEAD_TIME_S,
         )
         print()
-
+        self.accelerometer.set_measurement_enabled(False)
         self.hall_sensor = None
         if HALL_ENABLED:
             print("Initializing Hall sensor...")
@@ -132,28 +132,32 @@ class MeasurementSystem:
             print(f"[CSV] Failed to append reading: {e}")
 
     def on_begin_button_pressed(self):
-        self.state_machine.toggle_measurement()
+     self.state_machine.toggle_measurement()
 
-        if self.state_machine.is_measuring():
-            self.readings.clear()
-            self.accelerometer.clear_events()
-            self._initialize_csv_file()
-            if self.hall_sensor:
-                self.hall_sensor.reset_count()
-            self.idle_led.turn_off()
-        else:
-            self.measuring_led.turn_off()
-            self.idle_led.turn_on()
-
-    def on_shutdown(self):
-        if self.state_machine.is_measuring():
-            self.state_machine.stop_measurement()
-
+     if self.state_machine.is_measuring():
+        self.readings.clear()
+        self.accelerometer.clear_events()
+        self.accelerometer.set_measurement_enabled(True)
+        self._initialize_csv_file()
+        if self.hall_sensor:
+            self.hall_sensor.reset_count()
+        self.idle_led.turn_off()
+     else:
+        self.accelerometer.set_measurement_enabled(False)
         self.measuring_led.turn_off()
         self.idle_led.turn_on()
-        self.save_readings_to_csv()
 
-        print("\n[POWER] Measurement stopped. Returned to IDLE.")
+    def on_shutdown(self):
+     self.accelerometer.set_measurement_enabled(False)
+
+     if self.state_machine.is_measuring():
+        self.state_machine.stop_measurement()
+
+     self.measuring_led.turn_off()
+     self.idle_led.turn_on()
+     self.save_readings_to_csv()
+
+     print("\n[POWER] Measurement stopped. Returned to IDLE.")
 
     def read_vibration(self):
     

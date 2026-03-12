@@ -105,7 +105,7 @@ class Accelerometer(Sensor):
         self._events = deque()
         self._last_event_time = 0.0
         self._last_xyz = {"x": 0.0, "y": 0.0, "z": 0.0}
-
+        self.measurement_enabled = False
         self._load_gpio()
         self._initialize_i2c()
 
@@ -133,7 +133,14 @@ class Accelerometer(Sensor):
         except Exception as e:
             print(f"[ACCELEROMETER] ERROR: Could not initialize - {type(e).__name__}: {e}")
             self.cleanup()
+    def set_measurement_enabled(self, enabled: bool):
+    
+            self.measurement_enabled = bool(enabled)
+            if not self.measurement_enabled:
+                self.clear_events()
 
+    def is_measurement_enabled(self):
+        return self.measurement_enabled
     def _detect_device_address(self):
         candidate_addresses = []
 
