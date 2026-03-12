@@ -5,11 +5,11 @@ import time
 
 class LED:
     """Base class for LEDs."""
-    
+
     def __init__(self, pin, name):
         """
         Initialize an LED.
-        
+
         Args:
             pin: GPIO pin number for the LED
             name: Name of the LED (for logging)
@@ -18,37 +18,38 @@ class LED:
         self.name = name
         self.GPIO = None
         self.is_on = False
-        
+
         try:
             import RPi.GPIO as GPIO
+
             self.GPIO = GPIO
             GPIO.setmode(GPIO.BCM)
             GPIO.setup(pin, GPIO.OUT)
-            GPIO.output(pin, GPIO.LOW)  # Start with LED off
+            GPIO.output(pin, GPIO.LOW)
             print(f"[{name}] LED initialized on GPIO {pin}")
         except ImportError:
             print(f"[{name}] Warning: RPi.GPIO not available, using simulated mode")
         except Exception as e:
             print(f"[{name}] Warning: Could not initialize - {e}")
-    
+
     def turn_on(self):
         """Turn the LED on."""
         if self.GPIO is None:
             self.is_on = True
             return
-        
+
         try:
             self.GPIO.output(self.pin, self.GPIO.HIGH)
             self.is_on = True
         except Exception as e:
             print(f"[{self.name}] Error turning on: {e}")
-    
+
     def turn_off(self):
         """Turn the LED off."""
         if self.GPIO is None:
             self.is_on = False
             return
-        
+
         try:
             self.GPIO.output(self.pin, self.GPIO.LOW)
             self.is_on = False
@@ -59,10 +60,10 @@ class LED:
 class IdleLED(LED):
     """
     IDLE state indicator LED.
-    
+
     Stays lit while system is in IDLE state.
     """
-    
+
     def __init__(self, pin=5, name="IDLE_LED"):
         """Initialize the IDLE LED on GPIO 5 by default."""
         super().__init__(pin, name)
@@ -71,14 +72,14 @@ class IdleLED(LED):
 class MeasuringLED(LED):
     """
     MEASURING state indicator LED.
-    
+
     Blinks while system is in MEASURING state.
     """
-    
+
     def __init__(self, pin=6, name="MEASURING_LED", blink_interval=0.5):
         """
         Initialize the MEASURING LED on GPIO 6 by default.
-        
+
         Args:
             pin: GPIO pin number (default: 6)
             name: Name of the LED (default: "MEASURING_LED")
@@ -87,12 +88,11 @@ class MeasuringLED(LED):
         super().__init__(pin, name)
         self.blink_interval = blink_interval
         self.last_blink_time = 0
-    
+
     def update(self):
         """Update LED blinking state. Call this regularly in the main loop."""
         current_time = time.time()
         if current_time - self.last_blink_time >= self.blink_interval:
-            # Toggle the LED
             if self.is_on:
                 self.turn_off()
             else:
@@ -112,7 +112,7 @@ class CopyLED(LED):
         super().__init__(pin, name)
         self.blink_interval = blink_interval
         self.last_blink_time = 0
-        self.mode = "off"  # off | blinking | on
+        self.mode = "off"
 
     def set_copying(self):
         """Set LED to blinking mode."""

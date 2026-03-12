@@ -132,49 +132,48 @@ class MeasurementSystem:
             print(f"[CSV] Failed to append reading: {e}")
 
     def on_begin_button_pressed(self):
-     self.state_machine.toggle_measurement()
+        self.state_machine.toggle_measurement()
 
-     if self.state_machine.is_measuring():
-        self.readings.clear()
-        self.accelerometer.clear_events()
-        self.accelerometer.set_measurement_enabled(True)
-        self._initialize_csv_file()
-        if self.hall_sensor:
-            self.hall_sensor.reset_count()
-        self.idle_led.turn_off()
-     else:
-        self.accelerometer.set_measurement_enabled(False)
-        self.measuring_led.turn_off()
-        self.idle_led.turn_on()
+        if self.state_machine.is_measuring():
+            self.readings.clear()
+            self.accelerometer.clear_events()
+            self.accelerometer.set_measurement_enabled(True)
+            self._initialize_csv_file()
+            if self.hall_sensor:
+                self.hall_sensor.reset_count()
+            self.idle_led.turn_off()
+        else:
+            self.accelerometer.set_measurement_enabled(False)
+            self.measuring_led.turn_off()
+            self.idle_led.turn_on()
 
     def on_shutdown(self):
-     self.accelerometer.set_measurement_enabled(False)
+        self.accelerometer.set_measurement_enabled(False)
 
-     if self.state_machine.is_measuring():
-        self.state_machine.stop_measurement()
+        if self.state_machine.is_measuring():
+            self.state_machine.stop_measurement()
 
-     self.measuring_led.turn_off()
-     self.idle_led.turn_on()
-     self.save_readings_to_csv()
+        self.measuring_led.turn_off()
+        self.idle_led.turn_on()
+        self.save_readings_to_csv()
 
-     print("\n[POWER] Measurement stopped. Returned to IDLE.")
+        print("\n[POWER] Measurement stopped. Returned to IDLE.")
 
     def read_vibration(self):
-    
-     try:
-        events = self.accelerometer.drain_events()
-        for event in events:
-            reading = {
-                "timestamp": event["timestamp"],
-                "x": event["x"],
-                "y": event["y"],
-                "z": event["z"],
-                "spin_count": self.hall_sensor.get_count() if self.hall_sensor else 0,
-            }
-            self.readings.append(reading)
-            self._append_reading_to_csv(reading)
-     except Exception as e:
-        print(f"[ERROR] Failed to read accelerometer events: {e}")
+        try:
+            events = self.accelerometer.drain_events()
+            for event in events:
+                reading = {
+                    "timestamp": event["timestamp"],
+                    "x": event["x"],
+                    "y": event["y"],
+                    "z": event["z"],
+                    "spin_count": self.hall_sensor.get_count() if self.hall_sensor else 0,
+                }
+                self.readings.append(reading)
+                self._append_reading_to_csv(reading)
+        except Exception as e:
+            print(f"[ERROR] Failed to read accelerometer events: {e}")
 
     def _is_removable_mount(self, device, fstype, mount_point):
         if not device.startswith(("/dev/sd", "/dev/mmcblk")):

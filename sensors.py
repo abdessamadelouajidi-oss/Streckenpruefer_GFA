@@ -133,14 +133,15 @@ class Accelerometer(Sensor):
         except Exception as e:
             print(f"[ACCELEROMETER] ERROR: Could not initialize - {type(e).__name__}: {e}")
             self.cleanup()
+
     def set_measurement_enabled(self, enabled: bool):
-    
-            self.measurement_enabled = bool(enabled)
-            if not self.measurement_enabled:
-                self.clear_events()
+        self.measurement_enabled = bool(enabled)
+        if not self.measurement_enabled:
+            self.clear_events()
 
     def is_measurement_enabled(self):
         return self.measurement_enabled
+
     def _detect_device_address(self):
         candidate_addresses = []
 
@@ -491,8 +492,8 @@ class HallSensor:
     """
     Threaded polling hall sensor.
     Counts ONLY ONE per interaction:
-      - counts on HIGH -> LOW
-      - then locks until signal returns to HIGH and stays stable
+    - counts on HIGH -> LOW
+    - then locks until signal returns to HIGH and stays stable
     """
 
     def __init__(
