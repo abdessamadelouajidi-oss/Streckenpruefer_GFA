@@ -44,7 +44,7 @@ from state_machine import StateMachine
 class MeasurementSystem:
     """Main vibration measurement system coordinator."""
 
-   CSV_FIELDNAMES = ["timestamp", "src", "axes", "x", "y", "z", "spin_count"]
+    CSV_FIELDNAMES = ["timestamp", "src", "axes", "x", "y", "z", "spin_count"]
 
     def __init__(self):
         """Initialize the measurement system."""
@@ -155,9 +155,9 @@ class MeasurementSystem:
 
         print("\n[POWER] Measurement stopped. Returned to IDLE.")
 
-   def read_vibration(self):
+    def read_vibration(self):
        """Drain queued transient events and store them as readings."""
-     try:
+    try:
         events = self.accelerometer.drain_events()
         for event in events:
             reading = {
@@ -171,7 +171,7 @@ class MeasurementSystem:
             }
             self.readings.append(reading)
             self._append_reading_to_csv(reading)
-     except Exception as e:
+    except Exception as e:
         print(f"[ERROR] Failed to read accelerometer events: {e}")
 
     def _is_removable_mount(self, device, fstype, mount_point):
